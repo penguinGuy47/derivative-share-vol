@@ -1,0 +1,7 @@
+yfinance>=1.0
+streamlit>=1.50
+plotly>=5.20
+pandas>=2.0
+numpy>=1.26
+tzdata  # time-zone data (needed on Windows)
+pytest>=8.0  # only needed to run the tests
