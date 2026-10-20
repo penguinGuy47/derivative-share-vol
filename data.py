@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -67,6 +67,27 @@ def fetch_risk_free_rate() -> tuple[float, str]:
     )
 
 
+def latest_quote(tk: yf.Ticker) -> tuple[date, float, int] | None:
+    """(session date, price, session volume) from Yahoo's live quote.
+
+    This comes back with the price-history request, so it costs nothing extra.
+    Returns None if Yahoo didn't include it.
+    """
+    try:
+        meta = tk.get_history_metadata() or {}
+        when = meta.get("regularMarketTime")
+        price = meta.get("regularMarketPrice")
+        volume = meta.get("regularMarketVolume")
+        if when is None or not price or not volume:
+            return None
+        if isinstance(when, (int, float)):
+            when = pd.Timestamp(when, unit="s", tz="UTC")
+        when = pd.Timestamp(when).tz_convert(meta.get("exchangeTimezoneName") or "America/New_York")
+        return when.date(), float(price), int(volume)
+    except Exception:
+        return None
+
+
 def fetch_stock(tk: yf.Ticker, ticker: str) -> dict:
     """Last close, latest session volume, 20-day average volume, dividend yield."""
     try:
@@ -80,31 +101,47 @@ def fetch_stock(tk: yf.Ticker, ticker: str) -> dict:
             ) from exc
         raise
     hist = hist.dropna(subset=["Close"])
-    # Before the open Yahoo can add a zero-volume row for today; use the last real session.
-    traded = hist[hist["Volume"] > 0]
-    if not traded.empty:
-        hist = traded
     if hist.empty:
         raise DataFetchError(
             f"No price data found for '{ticker}'. Check the symbol is a valid US-listed ticker."
         )
+    volumes = hist["Volume"].fillna(0)
+    closes = hist["Close"]
 
-    last = hist.iloc[-1]
-    last_close = float(last["Close"])
+    # Yahoo's daily bars can lag the live quote (e.g. today's bar is missing or
+    # still shows zero volume after the close), so the quote decides which
+    # session is the latest and what its volume is.
+    quote = latest_quote(tk)
+    if quote is not None:
+        q_date, q_price, q_volume = quote
+        keep = hist.index.date <= q_date
+        volumes, closes = volumes[keep], closes[keep]
+        q_index = pd.Timestamp(q_date).tz_localize(hist.index.tz)
+        volumes.loc[q_index] = q_volume
+        closes.loc[q_index] = q_price
+    else:
+        # No quote: skip trailing zero-volume rows (Yahoo adds one for today
+        # before the open) and use the last session that actually traded.
+        traded = volumes[volumes > 0]
+        if not traded.empty:
+            volumes, closes = volumes.loc[: traded.index[-1]], closes.loc[: traded.index[-1]]
+
+    trade_date = volumes.index[-1].date()
+    last_close = float(closes.iloc[-1])
 
     # Dividend yield = dividends paid over the last 12 months / price.
     div_yield = 0.0
     if "Dividends" in hist.columns:
-        cutoff = hist.index[-1] - pd.Timedelta(days=365)
+        cutoff = volumes.index[-1] - pd.Timedelta(days=365)
         paid = float(hist.loc[hist.index > cutoff, "Dividends"].sum())
         if paid > 0 and last_close > 0:
             div_yield = paid / last_close
 
     return {
-        "trade_date": hist.index[-1].date(),
+        "trade_date": trade_date,
         "last_close": last_close,
-        "volume": int(last["Volume"]),
-        "avg_volume_20d": float(hist["Volume"].tail(20).mean()),
+        "volume": int(volumes.iloc[-1]),
+        "avg_volume_20d": float(volumes.tail(20).mean()),
         "dividend_yield": div_yield,
     }
 

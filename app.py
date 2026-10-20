@@ -5,6 +5,8 @@ Run with:  streamlit run app.py
 
 from __future__ import annotations
 
+from datetime import datetime, time
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -170,7 +172,8 @@ for i, ticker in enumerate(tickers):
         errors[ticker] = f"Couldn't crunch the numbers for {ticker}: {exc}"
         continue
 
-    results[ticker] = {"stock": stock, "contracts": contracts, "summary": summary}
+    results[ticker] = {"stock": stock, "contracts": contracts, "summary": summary,
+                       "fetched_at": raw["fetched_at"]}
 
     if raw["chain"].empty:
         notes.append(f"**{ticker}** has no listed options on Yahoo, so its options volume is zero.")
@@ -193,6 +196,25 @@ progress.empty()
 
 for ticker, msg in errors.items():
     st.error(f"**{ticker}**: {msg}", icon="⚠️")
+
+if results:
+    sessions = sorted({r["stock"]["trade_date"] for r in results.values()})
+    downloaded = min(datetime.fromisoformat(r["fetched_at"]) for r in results.values())
+    now_et = datetime.now(calc.MARKET_TZ)
+    session_text = " / ".join(f"{d:%A, %b} {d.day}, {d.year}" for d in sessions)
+    status = (
+        f"📅 Showing the trading session of **{session_text}** "
+        f"(downloaded at {downloaded:%I:%M %p} your time; press Refresh for newer data)."
+    )
+    if sessions[-1] < now_et.date():
+        if now_et.weekday() >= 5:
+            status += " The market is closed for the weekend."
+        elif now_et.time() < time(9, 30):
+            status += " Today's session opens at 9:30 AM Eastern. Refresh after the open to see it."
+        else:
+            status += (" Yahoo hasn't published today's session yet, or the market is closed today "
+                       "for a holiday.")
+    st.markdown(status)
 
 
 tab_today, tab_history = st.tabs(["Latest session", "History"])

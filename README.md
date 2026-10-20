@@ -95,6 +95,8 @@ To stop the dashboard, go back to the terminal and press **Ctrl + C**.
 - Type tickers separated by commas (e.g. `AAPL, TSLA, NVDA, AMC`) and press Enter.
 - Data is cached for **10 minutes** so Yahoo doesn't rate-limit you. Press **Refresh data** to
   force a fresh download.
+- The line above the tabs shows which trading session you're looking at. Before 9:30 AM
+  Eastern on a weekday it's still the previous session; refresh after the open to see today's.
 - Loading takes a few seconds per ticker, because the dashboard downloads every option
   expiration date.
 - **Latest session** tab:
